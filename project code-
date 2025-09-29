@@ -1,0 +1,160 @@
+/*
+   RFID Car Parking System
+   ------------------------
+   Components:
+   - ESP8266 (NodeMCU)
+   - RFID RC522 Reader
+   - Servo Motor (Gate)
+   - Buzzer
+   - OLED Display (SSD1306 I2C)
+
+   Idea:
+   Scan RFID card → Check if UID is in authorized list
+   If yes → Open gate + show "Access Granted"
+   If no → Buzzer beeps + show "Access Denied"
+*/
+
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// OLED settings
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// RFID pins
+#define SS_PIN D4   // SDA pin of RC522
+#define RST_PIN D3  // RST pin of RC522
+
+// Hardware pins
+#define SERVO_PIN D2
+#define BUZZER_PIN D1
+
+MFRC522 rfid(SS_PIN, RST_PIN);
+Servo gateServo;
+
+// List of allowed RFID card UIDs
+// You can add more by copying the format
+String authorizedCards[] = {
+  "12 34 56 78",
+  "AB CD EF 90"
+};
+
+void setup() {
+  Serial.begin(9600);
+  SPI.begin();
+  rfid.PCD_Init();
+
+  // Servo + Buzzer setup
+  gateServo.attach(SERVO_PIN);
+  gateServo.write(0); // Start with gate closed
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // Setup OLED
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("OLED not found, check wiring!");
+    for (;;); // Stuck here if OLED fails
+  }
+
+  // Welcome screen
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 20);
+  display.println("RFID Parking System");
+  display.setCursor(0, 40);
+  display.println("Scan your card...");
+  display.display();
+
+  Serial.println("System Ready. Waiting for card...");
+}
+
+void loop() {
+  // Look for new card
+  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
+    return;
+  }
+
+  // Get UID of scanned card
+  String cardID = readCardID();
+  Serial.print("Card scanned: ");
+  Serial.println(cardID);
+
+  // Check if it's authorized
+  if (isAuthorized(cardID)) {
+    allowEntry();
+  } else {
+    denyEntry();
+  }
+
+  // Stop RFID
+  rfid.PICC_HaltA();
+  rfid.PCD_StopCrypto1();
+}
+
+// Reads card UID and returns as a string
+String readCardID() {
+  String id = "";
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    id += String(rfid.uid.uidByte[i], HEX);
+    if (i < rfid.uid.size - 1) id += " ";
+  }
+  id.toUpperCase();
+  return id;
+}
+
+// Check if UID is in the authorized list
+bool isAuthorized(String id) {
+  for (String card : authorizedCards) {
+    if (id == card) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// If card is authorized → open gate
+void allowEntry() {
+  Serial.println("Access Granted  Opening Gate...");
+  showOnDisplay("Access Granted", "Opening Gate...");
+  
+  // Open gate
+  gateServo.write(90);
+  delay(5000); // Gate stays open for 5 sec
+  gateServo.write(0);
+  
+  showOnDisplay("Gate Closed", "Scan next card");
+  Serial.println("Gate Closed ");
+}
+
+// If card is unauthorized → buzzer + deny
+void denyEntry() {
+  Serial.println("Access Denied ");
+  showOnDisplay("Access Denied", "Unauthorized Card");
+
+  // Buzzer beep 3 times
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(200);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(200);
+  }
+}
+
+// Helper function: print message on OLED
+void showOnDisplay(String line1, String line2) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 20);
+  display.println(line1);
+  display.setCursor(0, 40);
+  display.println(line2);
+  display.display();
+}
+
